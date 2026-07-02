@@ -3,10 +3,13 @@ const path = require('path');
 const https = require('https');
 const fs = require('fs');
 
-const CURRENT_VERSION = '1.0.3';
+const CURRENT_VERSION = '1.0.4';
 const VERSION_URL = 'https://raw.githubusercontent.com/piffgames/wmg-desktop/main/version.txt';
 const GAME_URL = 'https://raw.githubusercontent.com/piffgames/wmg-desktop/main/WMG_v12.html';
-const LOCAL_GAME_PATH = path.join(app.getPath('userData'), 'game.html');
+
+// Local game file paths
+const BUNDLED_GAME = path.join(__dirname, 'WMG_v12.html'); // shipped with the app
+const CACHED_GAME = path.join(app.getPath('userData'), 'game_cache.html'); // downloaded updates
 
 let mainWindow;
 
@@ -26,48 +29,29 @@ function createWindow() {
     autoHideMenuBar: true,
   });
 
-  // Load the game
-  loadGame();
-}
-
-function loadGame() {
-  // Try to download latest game from GitHub
-  https.get(GAME_URL, (res) => {
-    let data = '';
-    res.on('data', (chunk) => { data += chunk; });
-    res.on('end', () => {
-      if (data && data.includes('<!DOCTYPE html>')) {
-        // Save locally for offline use
-        fs.writeFileSync(LOCAL_GAME_PATH, data, 'utf-8');
-        mainWindow.loadFile(LOCAL_GAME_PATH);
-      } else {
-        loadLocalFallback();
-      }
-      // Check version after loading
-      setTimeout(checkForUpdates, 3000);
-    });
-  }).on('error', () => {
-    // No internet — load cached version
-    loadLocalFallback();
-  });
-}
-
-function loadLocalFallback() {
-  if (fs.existsSync(LOCAL_GAME_PATH)) {
-    mainWindow.loadFile(LOCAL_GAME_PATH);
-  } else {
-    // No cached version — show error
-    mainWindow.loadURL('data:text/html,<h2 style="color:white;background:#050505;padding:40px;font-family:sans-serif">No internet connection and no cached game found. Please connect to the internet and restart.</h2>');
+  // Load immediately from local file — no network wait
+  if (fs.existsSync(CACHED_GAME)) {
+    mainWindow.loadFile(CACHED_GAME);
+  } else if (fs.existsSync(BUNDLED_GAME)) {
+    mainWindow.loadFile(BUNDLED_GAME);
   }
+
+  // After load, check for updates silently in background
+  mainWindow.webContents.on('did-finish-load', () => {
+    setTimeout(checkAndDownloadUpdate, 5000);
+  });
+
+  mainWindow.on('closed', () => { mainWindow = null; });
 }
 
-function checkForUpdates() {
+function checkAndDownloadUpdate() {
   https.get(VERSION_URL, (res) => {
     let data = '';
     res.on('data', (chunk) => { data += chunk; });
     res.on('end', () => {
       const latest = data.trim();
       if (latest && latest !== CURRENT_VERSION) {
+        // Show banner
         if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.webContents.executeJavaScript(`
             (function() {
@@ -75,19 +59,37 @@ function checkForUpdates() {
               var b = document.createElement('div');
               b.id = 'wmg-update-banner';
               b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:999999;background:#cc2222;color:#fff;text-align:center;padding:9px;font-family:sans-serif;font-size:12px;font-weight:bold;letter-spacing:0.03em';
-              b.innerHTML = '⚠️ YOUR GAME IS ON AN OUTDATED VERSION! PLEASE RESTART THE APP TO UPDATE. <span onclick="this.parentElement.remove()" style="cursor:pointer;opacity:0.6;font-size:11px;margin-left:12px">[dismiss]</span>';
+              b.innerHTML = '⚠️ A NEW VERSION IS AVAILABLE! PLEASE RESTART THE APP TO UPDATE. <span onclick="this.parentElement.remove()" style="cursor:pointer;opacity:0.6;font-size:11px;margin-left:12px">[dismiss]</span>';
               document.body.prepend(b);
             })();
           `).catch(() => {});
         }
+        // Download new version in background
+        downloadUpdate();
       }
     });
   }).on('error', () => {});
 }
 
-// Check for updates every 5 min
+function downloadUpdate() {
+  const file = fs.createWriteStream(CACHED_GAME + '.tmp');
+  https.get(GAME_URL, (res) => {
+    res.pipe(file);
+    file.on('finish', () => {
+      file.close();
+      // Replace cache with new version
+      try {
+        fs.renameSync(CACHED_GAME + '.tmp', CACHED_GAME);
+      } catch(e) {}
+    });
+  }).on('error', () => {
+    try { fs.unlinkSync(CACHED_GAME + '.tmp'); } catch(e) {}
+  });
+}
+
+// Check every 5 min
 setInterval(() => {
-  if (mainWindow && !mainWindow.isDestroyed()) checkForUpdates();
+  if (mainWindow && !mainWindow.isDestroyed()) checkAndDownloadUpdate();
 }, 5 * 60 * 1000);
 
 app.whenReady().then(() => {
