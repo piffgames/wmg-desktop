@@ -5,7 +5,7 @@ const fs = require('fs');
 
 const CURRENT_VERSION = '1.0.1';
 const VERSION_URL = 'https://raw.githubusercontent.com/piffgames/wmg-desktop/main/version.txt';
-const GAME_URL = 'https://raw.githubusercontent.com/piffgames/wmg-site/main/game/index.html';
+const GAME_URL = 'https://raw.githubusercontent.com/piffgames/wmg-desktop/main/WMG_v12.html';
 const LOCAL_GAME_PATH = path.join(app.getPath('userData'), 'game.html');
 
 let mainWindow;
